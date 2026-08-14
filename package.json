@@ -1,0 +1,35 @@
+{
+  "name": "dsh-user-plugins-manager",
+  "version": "1.0.0",
+  "description": "DSH 用户插件管理器:在“设置 → 插件”中管理 ~/.dsh/plugins 下用户插件的挂载、停用、启用与卸载(写入 cordis.patch.yml 补丁层,HMR 热生效)。",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./client/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/index.js",
+    "client/client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "cordis",
+    "plugin-manager"
+  ],
+  "license": "MIT"
+}
