@@ -3,14 +3,17 @@
 // 在“设置 → 插件 → 用户插件”页面的背后提供 JSON 管理 API:
 //   GET /dsh-user-plugins/state    ?sessionId=<当前会话>
 //   GET /dsh-user-plugins/loader   运行树(Loader)只读投影,与内置“全部”页同源
-//   GET /dsh-user-plugins/mount    ?file=<插件文件名>&sessionId=...
+//   GET /dsh-user-plugins/packages profile node_modules 里 dsh 插件包的安装/挂载清单
+//   GET /dsh-user-plugins/mount    ?file=<插件文件名> 或 ?pkg=<包名> &sessionId=...
 //   GET /dsh-user-plugins/unmount  ?id=<条目id>&source=<补丁文件>&sessionId=...
 //   GET /dsh-user-plugins/enable   ?id=...&source=...&sessionId=...
 //   GET /dsh-user-plugins/disable  ?id=...&source=...&sessionId=...
 //
 // 管理对象:① ~/.dsh/plugins 下的插件文件及其挂载行;② Loader 运行树中
 // 由部署/插件包挂载的其他条目——按 id 向用户补丁层写入顶层“停用覆盖”
-// 裸行(YAML `- id: x` + `disabled: true`),删除该行即恢复启用。
+// 裸行(YAML `- id: x` + `disabled: true`),删除该行即恢复启用;
+// ③ profile node_modules 里安装的 dsh npm 插件包——未挂载的按包名
+// insert 进补丁层(HMR 热生效),已挂载的展示其来源。
 // 写入一律经 fs 服务并按“当前会话”解析出的沙箱策略围栏,绝不绕过策略;
 // 补丁文件被 CLI 的 HMR 监听,保存后热重载、无需重启。
 
@@ -406,6 +409,111 @@ export function apply(ctx) {
     return scanState(sessionId)
   }
 
+  // ---- npm 插件包:扫描 profile node_modules 里声明 dsh.bundle.patch 的包 ----
+  // 挂载来源:bundles(全局) | patch(补丁层按包名 insert) | none(已安装未挂载)。
+  const PKG_OK = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i
+
+  async function scanPackages(sessionId) {
+    if (fs === undefined) return { ok: false, error: '文件服务(fs)不可用' }
+    const home = await locateHome()
+    if (home === undefined) return { ok: false, error: '无法确定 DSH_HOME' }
+    const profileDir = home + '/profiles/web'
+    const packages = []
+    let bundled = []
+    let dependencies = {}
+    try {
+      const manifestText = await readTextIfExists(profileDir + '/package.json')
+      if (manifestText !== undefined) {
+        const manifest = JSON.parse(manifestText)
+        const list = manifest.dsh?.profile?.bundles
+        if (Array.isArray(list)) bundled = list.map((name) => String(name))
+        if (manifest.dependencies !== null && typeof manifest.dependencies === 'object') dependencies = manifest.dependencies
+      }
+    } catch { /* manifest 损坏按空处理 */ }
+
+    const patchRows = []
+    for (const path of patchPaths(home)) {
+      const text = await readTextIfExists(path)
+      if (text === undefined) continue
+      for (const item of parsePatch(text)) patchRows.push({ id: item.id, name: item.name, disabled: item.disabled, source: path })
+    }
+
+    const nmDir = profileDir + '/node_modules'
+    try {
+      const nmTarget = await fs.resolve(nmDir)
+      const nmInfo = await fs.stat(nmTarget)
+      if (nmInfo !== undefined && nmInfo.type === 'directory') {
+        const entries = await fs.listDir(nmTarget)
+        for (const entry of entries) {
+          if (entry.type !== 'directory' || entry.name.startsWith('.')) continue
+          let manifest
+          try {
+            const pkgTarget = await fs.resolve(nmDir + '/' + entry.name + '/package.json')
+            const pkgInfo = await fs.stat(pkgTarget)
+            if (pkgInfo === undefined || pkgInfo.type !== 'file') continue
+            manifest = JSON.parse(await fs.readText(pkgTarget))
+          } catch { continue }
+          if (manifest === null || typeof manifest !== 'object') continue
+          if (typeof manifest.dsh?.bundle?.patch !== 'string') continue
+          const name = String(manifest.name)
+          const row = patchRows.find((candidate) => sameName(candidate.name, name))
+          packages.push({
+            name,
+            version: manifest.version === undefined ? null : String(manifest.version),
+            specifier: dependencies[name] === undefined ? null : String(dependencies[name]),
+            mounted: bundled.includes(name) ? 'bundle' : row === undefined ? 'none' : 'patch',
+            patchId: row === undefined ? null : row.id,
+            patchSource: row === undefined ? null : row.source,
+          })
+        }
+      }
+    } catch { /* node_modules 不可读按空处理 */ }
+    packages.sort((a, b) => a.name.localeCompare(b.name))
+    return { ok: true, profileDir, packages }
+  }
+
+  // ---- 按包名挂载:与文件挂载同机制(补丁层 insert 包名,HMR 热生效)----
+  // 仅接受 scanPackages 确认存在且未挂载的 dsh 包,防止任意模块注入。
+  async function mountPackage(pkg, sessionId) {
+    if (fs === undefined) return { ok: false, error: '文件服务(fs)不可用' }
+    if (typeof pkg !== 'string' || pkg === '' || pkg.length > 128 || !PKG_OK.test(pkg)) {
+      return { ok: false, error: '无效的包名' }
+    }
+    const home = await locateHome()
+    if (home === undefined) return { ok: false, error: '无法确定 DSH_HOME' }
+    const scan = await scanPackages(sessionId)
+    if (scan.ok !== true) return scan
+    const found = scan.packages.find((candidate) => candidate.name === pkg)
+    if (found === undefined) return { ok: false, error: 'profile 的 node_modules 中不存在该 dsh 插件包:' + pkg }
+    if (found.mounted === 'bundle') return { ok: false, error: pkg + ' 已由 dsh.profile.bundles 全局挂载(启停请在“其他已挂载插件”组操作)' }
+    if (found.mounted === 'patch') return { ok: false, error: pkg + ' 已由补丁层挂载(条目 id:' + found.patchId + ')' }
+
+    const paths = patchPaths(home)
+    const allIds = []
+    let source
+    for (const path of paths) {
+      const text = await readTextIfExists(path)
+      if (text === undefined) continue
+      if (source === undefined) source = path
+      for (const item of parsePatch(text)) allIds.push(item.id)
+    }
+    if (source === undefined) source = paths[paths.length - 1]
+
+    let base = sanitizeId(pkg)
+    let id = base
+    let n = 2
+    while (allIds.includes(id)) { id = base + '-' + n; n++ }
+
+    const existing = await readLines(source)
+    const next = existing === undefined
+      ? ['# dsh 用户插件补丁层(由“设置 → 插件 → 用户插件”页管理)。', '# 顶层 YAML 数组:loader 补丁条目(insert/覆盖/disable 列表)。', '']
+      : existing
+    while (next.length > 0 && next[next.length - 1].trim() === '') next.pop()
+    next.push('', '- insert:', '    - id: ' + id, "      name: '" + pkg + "'")
+    await writeLines(source, next, sessionId)
+    return scanState(sessionId)
+  }
+
   function failure(error, sessionId) {
     const hint = policyHint(sessionId)
     return { ok: false, error: errorOf(error) + (hint === '' ? '' : '。' + hint) }
@@ -433,7 +541,12 @@ export function apply(ctx) {
     const disposes = [
       route('/dsh-user-plugins/state', (query) => scanState(query.get('sessionId'))),
       route('/dsh-user-plugins/loader', () => loaderSnapshot()),
-      route('/dsh-user-plugins/mount', (query) => mountPlugin(query.get('file'), query.get('sessionId'))),
+      route('/dsh-user-plugins/packages', (query) => scanPackages(query.get('sessionId'))),
+      route('/dsh-user-plugins/mount', (query) => {
+        const pkg = query.get('pkg')
+        if (pkg !== null) return mountPackage(pkg, query.get('sessionId'))
+        return mountPlugin(query.get('file'), query.get('sessionId'))
+      }),
       route('/dsh-user-plugins/unmount', (query) => mutatePatch(query.get('id'), query.get('source'), 'unmount', query.get('sessionId'))),
       route('/dsh-user-plugins/enable', (query) => mutatePatch(query.get('id'), query.get('source'), 'enable', query.get('sessionId'))),
       route('/dsh-user-plugins/disable', (query) => mutatePatch(query.get('id'), query.get('source'), 'disable', query.get('sessionId'))),

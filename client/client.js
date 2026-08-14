@@ -1,11 +1,13 @@
 // dsh-user-plugins-manager — Client half(预构建 module-loader bundle,零构建)
 //
-// 注册到 设置 → 插件 的“用户插件”标签页。页面分两组:
+// 注册到 设置 → 插件 的“用户插件”标签页。页面分三组:
 //   ① 插件目录(~/.dsh/plugins)散件:挂载 / 卸载 / 启用 / 停用;
 //   ② 运行树其他插件(部署、插件包、动态挂载):按条目 id 停用 / 启用
-//     (停用 = 向用户补丁层写顶层“停用覆盖”裸行,删除即恢复)。
-// 数据来自宿主半的 /dsh-user-plugins/{state,loader,...} JSON 路由;
-// 宿主半未升级(没有 loader 路由)时自动降级为旧版行为,不报错。
+//     (停用 = 向用户补丁层写顶层“停用覆盖”裸行,删除即恢复);
+//   ③ 已安装的 npm 插件包(profile node_modules 里声明 dsh.bundle.patch
+//     的包):显示安装/挂载来源,未挂载的一键按包名挂载进补丁层。
+// 数据来自宿主半的 /dsh-user-plugins/{state,loader,packages,...} JSON 路由;
+// 宿主半未升级(缺少新路由)时自动降级为旧版行为,不报错。
 window.__ModuleLoader__.load({
   id: "dsh-user-plugins-manager",
   factory: (require) => {
@@ -117,6 +119,8 @@ window.__ModuleLoader__.load({
       const [data, setData] = React.useState(null)
       const [loaderData, setLoaderData] = React.useState(null)
       const [loaderError, setLoaderError] = React.useState(null)
+      const [packagesData, setPackagesData] = React.useState(null)
+      const [packagesError, setPackagesError] = React.useState(null)
       const [error, setError] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
 
@@ -151,6 +155,15 @@ window.__ModuleLoader__.load({
         }
       }
 
+      function applyPackagesResult(snapshot) {
+        if (snapshot !== null && snapshot !== undefined && snapshot.ok === true) {
+          setPackagesData(snapshot)
+          setPackagesError(null)
+        } else if (snapshot !== null && snapshot !== undefined) {
+          setPackagesError(snapshot.error || "不可用")
+        }
+      }
+
       async function refresh() {
         setBusy(true)
         await Promise.all([
@@ -161,6 +174,10 @@ window.__ModuleLoader__.load({
           request("loader", {}).then(
             (snapshot) => { applyLoaderResult(snapshot) },
             (err) => { setLoaderError("运行树不可用:" + String(err && err.message ? err.message : err)) },
+          ),
+          request("packages", {}).then(
+            (snapshot) => { applyPackagesResult(snapshot) },
+            (err) => { setPackagesError("清单不可用:" + String(err && err.message ? err.message : err)) },
           ),
         ])
         setBusy(false)
@@ -176,10 +193,14 @@ window.__ModuleLoader__.load({
           return
         }
         applyResult(result)
-        // 停用/启用会经 HMR 重载运行树,稍后再拉一次 loader 快照。
+        // 停用/启用/挂载/卸载会经 HMR 重载运行树与补丁层,稍后再拉一次快照。
         setTimeout(() => {
           void request("loader", {}).then(
             (snapshot) => { applyLoaderResult(snapshot) },
+            () => { /* 保持上一次快照 */ },
+          )
+          void request("packages", {}).then(
+            (snapshot) => { applyPackagesResult(snapshot) },
             () => { /* 保持上一次快照 */ },
           )
         }, 700)
@@ -302,8 +323,50 @@ window.__ModuleLoader__.load({
             : otherRows,
         ))
 
+        // ---- 第三组:已安装的 npm 插件包 ----
+        const packagesAvailable = packagesData !== null && packagesData.ok === true
+        const packageItems = packagesAvailable ? (packagesData.packages || []) : []
+        rows.push(e("div", { key: "pkg-title", className: "upm-subtitle" },
+          "已安装的 npm 插件包(profile/node_modules)",
+          e("span", { className: "upm-count" }, packagesAvailable ? packageItems.length + " 个包" : "—"),
+        ))
+        if (!packagesAvailable && packagesError !== null) {
+          rows.push(e("div", { key: "pkg-hint", className: "upm-warn" },
+            packagesError, "(该接口由宿主半插件提供,更新插件后重启 dsh 即可)",
+          ))
+        }
+        if (packagesAvailable) {
+          const pkgRows = packageItems.map((item) => {
+            const badge = item.mounted === "bundle"
+              ? Badge({ key: "badge", tone: "on", text: "全局挂载" })
+              : item.mounted === "patch"
+                ? Badge({ key: "badge", tone: "on", text: "补丁层挂载" })
+                : Badge({ key: "badge", tone: "none", text: "已安装未挂载" })
+            const actions = item.mounted === "bundle"
+              ? [e("span", { key: "hint", className: "upm-meta" }, "启停见“其他已挂载插件”组(重启 dsh 后出现)")]
+              : item.mounted === "patch"
+                ? [ActionButton({ key: "unmount", label: "卸载", tone: "danger", busy, onClick: () => { void act("unmount", { id: item.patchId, source: item.patchSource }) } })]
+                : [ActionButton({ key: "mount", label: "挂载", tone: "primary", busy, onClick: () => { void act("mount", { pkg: item.name }) } })]
+            return e("div", { key: "pkg-" + item.name, className: "upm-row" },
+              e("div", { className: "upm-info" },
+                e("div", { className: "upm-name" }, item.name),
+                e("div", { className: "upm-file" },
+                  "v" + (item.version === null ? "?" : item.version) +
+                  (item.specifier === null ? "" : " · 依赖: " + item.specifier)),
+              ),
+              badge,
+              e("div", { className: "upm-actions" }, actions),
+            )
+          })
+          rows.push(e("div", { key: "pkg-card", className: "upm-card" },
+            pkgRows.length === 0
+              ? e("div", { className: "upm-empty" }, "profile 里还没有安装 dsh 插件包(用 pnpm add 安装后点“刷新”)。")
+              : pkgRows,
+          ))
+        }
+
         rows.push(e("div", { key: "note", className: "upm-note" },
-          "本页管理两类插件:①插件目录(~/.dsh/plugins)散件——挂载/卸载/启用/停用直接改补丁层条目;②运行树其他插件(部署、插件包等)——按条目 id 写“停用覆盖”裸行,删除即恢复。两个补丁文件都被 dsh HMR 监听,保存后热重载、无需重启;卸载只移除补丁行,插件文件保留。停用系统关键插件可能影响 dsh 功能,请谨慎操作。",
+          "本页管理三类插件:①插件目录散件——挂载/卸载/启用/停用直接改补丁层条目;②运行树其他插件(部署、插件包等)——按条目 id 写“停用覆盖”裸行,删除即恢复;③已安装的 npm 插件包——未挂载的按包名挂载进补丁层(HMR 热生效),已由 bundles 全局挂载的以运行树为准。两个补丁文件都被 dsh HMR 监听,保存后热重载、无需重启;卸载只移除补丁行,文件/包保留。停用系统关键插件可能影响 dsh 功能,请谨慎操作。",
         ))
       }
 
