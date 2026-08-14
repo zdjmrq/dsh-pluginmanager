@@ -21,6 +21,9 @@ window.__ModuleLoader__.load({
       ".upm-head{display:flex;align-items:center;gap:12px}" +
       ".upm-title{font-weight:600;flex:1}" +
       ".upm-subtitle{font-size:13px;font-weight:600}" +
+      ".upm-subtitle-btn{display:flex;align-items:center;gap:6px;width:100%;background:none;border:none;padding:0;margin:0;cursor:pointer;font:inherit;color:inherit;text-align:left}" +
+      ".upm-subtitle-btn:hover .upm-subtitle-text{color:var(--dsw-alias-brand-primary)}" +
+      ".upm-caret{display:inline-block;font-size:10px;line-height:1;color:var(--dsw-alias-label-secondary)}" +
       ".upm-count{font-size:11px;color:var(--dsw-alias-label-secondary);margin-left:6px}" +
       ".upm-meta{font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.7;overflow-wrap:anywhere}" +
       ".upm-meta code{font-family:ui-monospace,Consolas,monospace}" +
@@ -137,6 +140,12 @@ window.__ModuleLoader__.load({
       const [packagesError, setPackagesError] = React.useState(null)
       const [error, setError] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
+      // 三个分组默认折叠;标题行整行是折叠开关。
+      const [collapsed, setCollapsed] = React.useState({ dir: true, pkg: true, other: true })
+
+      function toggleGroup(key) {
+        setCollapsed((prev) => Object.assign({}, prev, { [key]: !prev[key] }))
+      }
 
       function applyResult(result) {
         if (result !== null && result !== undefined && result.ok === true) {
@@ -259,8 +268,9 @@ window.__ModuleLoader__.load({
         const loaderEntries = loaderData !== null && loaderData.ok === true ? (loaderData.entries || []) : []
 
         // ---- 第一组:插件目录散件 ----
-        rows.push(e("div", { key: "dir-title", className: "upm-subtitle" },
-          "插件目录(DSH_HOME/plugins)",
+        rows.push(e("button", { key: "dir-title", type: "button", className: "upm-subtitle-btn", "aria-expanded": collapsed.dir !== true, onClick: () => { toggleGroup("dir") } },
+          e("span", { className: "upm-caret" }, collapsed.dir ? "▸" : "▾"),
+          e("span", { className: "upm-subtitle-text" }, "插件目录(DSH_HOME/plugins)"),
           e("span", { className: "upm-count" }, data.plugins.length + " 个文件"),
         ))
         const pluginRows = data.plugins.map((plugin) => {
@@ -289,99 +299,107 @@ window.__ModuleLoader__.load({
             e("div", { className: "upm-actions" }, actions),
           )
         })
-        rows.push(e("div", { key: "plugins-card", className: "upm-card" },
-          pluginRows.length === 0
-            ? e("div", { className: "upm-empty" }, "插件目录里还没有插件文件。将 .mjs/.js/.cjs 插件文件放入该目录后点“刷新”,再点“挂载”。")
-            : pluginRows,
-        ))
+        if (collapsed.dir !== true) {
+          rows.push(e("div", { key: "plugins-card", className: "upm-card" },
+            pluginRows.length === 0
+              ? e("div", { className: "upm-empty" }, "插件目录里还没有插件文件。将 .mjs/.js/.cjs 插件文件放入该目录后点“刷新”,再点“挂载”。")
+              : pluginRows,
+          ))
+        }
 
         // ---- 第二组:已安装的 npm 插件包 ----
         const packagesAvailable = packagesData !== null && packagesData.ok === true
         const packageItems = packagesAvailable ? (packagesData.packages || []) : []
-        rows.push(e("div", { key: "pkg-title", className: "upm-subtitle" },
-          "已安装的 npm 插件包(profile/node_modules)",
+        rows.push(e("button", { key: "pkg-title", type: "button", className: "upm-subtitle-btn", "aria-expanded": collapsed.pkg !== true, onClick: () => { toggleGroup("pkg") } },
+          e("span", { className: "upm-caret" }, collapsed.pkg ? "▸" : "▾"),
+          e("span", { className: "upm-subtitle-text" }, "已安装的 npm 插件包(profile/node_modules)"),
           e("span", { className: "upm-count" }, packagesAvailable ? packageItems.length + " 个包" : "—"),
         ))
-        if (!packagesAvailable && packagesError !== null) {
-          rows.push(e("div", { key: "pkg-hint", className: "upm-warn" },
-            packagesError, "(该接口由宿主半插件提供,更新插件后重启 dsh 即可)",
-          ))
-        }
-        if (packagesAvailable) {
-          const pkgRows = packageItems.map((item) => {
-            const badge = item.mounted === "bundle"
-              ? Badge({ key: "badge", tone: "on", text: "全局挂载" })
-              : item.mounted === "patch"
-                ? Badge({ key: "badge", tone: "on", text: "补丁层挂载" })
-                : Badge({ key: "badge", tone: "none", text: "已安装未挂载" })
-            const actions = item.mounted === "bundle"
-              ? [e("span", { key: "hint", className: "upm-meta" }, "启停见下方“其他已挂载插件”组")]
-              : item.mounted === "patch"
-                ? [ActionButton({ key: "unmount", label: "卸载", tone: "danger", busy, onClick: () => { void act("unmount", { id: item.patchId, source: item.patchSource }) } })]
-                : [ActionButton({ key: "mount", label: "挂载", tone: "primary", busy, onClick: () => { void act("mount", { pkg: item.name }) } })]
-            return e("div", { key: "pkg-" + item.name, className: "upm-row" },
-              e("div", { className: "upm-info" },
-                e("div", { className: "upm-name" }, item.name),
-                e("div", { className: "upm-file" },
-                  "v" + (item.version === null ? "?" : item.version) +
-                  (item.specifier === null ? "" : " · 依赖: " + item.specifier)),
-              ),
-              badge,
-              e("div", { className: "upm-actions" }, actions),
-            )
-          })
-          rows.push(e("div", { key: "pkg-card", className: "upm-card" },
-            pkgRows.length === 0
-              ? e("div", { className: "upm-empty" }, "profile 里还没有安装 dsh 插件包(用 pnpm add 安装后点“刷新”)。")
-              : pkgRows,
-          ))
+        if (collapsed.pkg !== true) {
+          if (!packagesAvailable && packagesError !== null) {
+            rows.push(e("div", { key: "pkg-hint", className: "upm-warn" },
+              packagesError, "(该接口由宿主半插件提供,更新插件后重启 dsh 即可)",
+            ))
+          }
+          if (packagesAvailable) {
+            const pkgRows = packageItems.map((item) => {
+              const badge = item.mounted === "bundle"
+                ? Badge({ key: "badge", tone: "on", text: "全局挂载" })
+                : item.mounted === "patch"
+                  ? Badge({ key: "badge", tone: "on", text: "补丁层挂载" })
+                  : Badge({ key: "badge", tone: "none", text: "已安装未挂载" })
+              const actions = item.mounted === "bundle"
+                ? [e("span", { key: "hint", className: "upm-meta" }, "启停见下方“其他已挂载插件”组")]
+                : item.mounted === "patch"
+                  ? [ActionButton({ key: "unmount", label: "卸载", tone: "danger", busy, onClick: () => { void act("unmount", { id: item.patchId, source: item.patchSource }) } })]
+                  : [ActionButton({ key: "mount", label: "挂载", tone: "primary", busy, onClick: () => { void act("mount", { pkg: item.name }) } })]
+              return e("div", { key: "pkg-" + item.name, className: "upm-row" },
+                e("div", { className: "upm-info" },
+                  e("div", { className: "upm-name" }, item.name),
+                  e("div", { className: "upm-file" },
+                    "v" + (item.version === null ? "?" : item.version) +
+                    (item.specifier === null ? "" : " · 依赖: " + item.specifier)),
+                ),
+                badge,
+                e("div", { className: "upm-actions" }, actions),
+              )
+            })
+            rows.push(e("div", { key: "pkg-card", className: "upm-card" },
+              pkgRows.length === 0
+                ? e("div", { className: "upm-empty" }, "profile 里还没有安装 dsh 插件包(用 pnpm add 安装后点“刷新”)。")
+                : pkgRows,
+            ))
+          }
         }
 
         // ---- 第三组:运行树中的其他插件(部署 / 插件包 / 动态挂载)----
         const loaderAvailable = loaderData !== null && loaderData.ok === true
         const otherItems = buildOtherItems(data, loaderData, packagesData)
-        rows.push(e("div", { key: "other-title", className: "upm-subtitle" },
-          "其他已挂载插件(Loader 运行树)",
+        rows.push(e("button", { key: "other-title", type: "button", className: "upm-subtitle-btn", "aria-expanded": collapsed.other !== true, onClick: () => { toggleGroup("other") } },
+          e("span", { className: "upm-caret" }, collapsed.other ? "▸" : "▾"),
+          e("span", { className: "upm-subtitle-text" }, "其他已挂载插件(Loader 运行树)"),
           e("span", { className: "upm-count" }, otherItems.length + " 个条目"),
         ))
-        if (!loaderAvailable && loaderError !== null) {
-          rows.push(e("div", { key: "loader-hint", className: "upm-warn" },
-            loaderError, "(运行树接口由宿主半插件提供,更新插件后重启 dsh 即可;未升级时以下只显示补丁层自有条目)",
+        if (collapsed.other !== true) {
+          if (!loaderAvailable && loaderError !== null) {
+            rows.push(e("div", { key: "loader-hint", className: "upm-warn" },
+              loaderError, "(运行树接口由宿主半插件提供,更新插件后重启 dsh 即可;未升级时以下只显示补丁层自有条目)",
+            ))
+          }
+          const otherRows = otherItems.map((item) => {
+            const title = moduleShortName(item.moduleName)
+            const badge = item.enabled ? Badge({ key: "badge", tone: "on", text: "已启用" }) : Badge({ key: "badge", tone: "off", text: "已停用" })
+            const originBadge = item.origin === "user"
+              ? Badge({ key: "origin", tone: "user", text: "自装" })
+              : Badge({ key: "origin", tone: "none", text: "官方" })
+            const own = item.source !== undefined && item.source !== null && item.source !== ""
+            const actions = item.enabled
+              ? [ActionButton({ key: "disable", label: "停用", busy, onClick: () => { if (!confirmDisable(item)) return; void act("disable", { id: item.entryId, source: item.source }) } })]
+              : [ActionButton({ key: "enable", label: "启用", tone: "primary", busy, onClick: () => { void act("enable", { id: item.entryId, source: item.source }) } })]
+            if (own && !item.enabled) {
+              actions.push(ActionButton({ key: "unmount", label: "卸载", tone: "danger", busy, onClick: () => { void act("unmount", { id: item.entryId, source: item.source }) } }))
+            }
+            return e("div", { key: "other-" + item.entryId, className: "upm-row" },
+              e("div", { className: "upm-info" },
+                e("div", { className: "upm-name" }, title === "" ? item.entryId : title),
+                e("div", { className: "upm-file" },
+                  "id: " + item.entryId + " · " + (item.moduleName === undefined || item.moduleName === null ? "(未声明 name)" : item.moduleName) +
+                  (own ? " · 补丁: " + item.source : "") +
+                  (loaderAvailable && item.dangling ? " · (未在运行树中)" : ""),
+                ),
+              ),
+              badge,
+              originBadge,
+              PhaseBadge(item.fiberPhase),
+              e("div", { className: "upm-actions" }, actions),
+            )
+          })
+          rows.push(e("div", { key: "other-card", className: "upm-card" },
+            otherRows.length === 0
+              ? e("div", { className: "upm-empty" }, "运行树里没有其他挂载的插件。")
+              : otherRows,
           ))
         }
-        const otherRows = otherItems.map((item) => {
-          const title = moduleShortName(item.moduleName)
-          const badge = item.enabled ? Badge({ key: "badge", tone: "on", text: "已启用" }) : Badge({ key: "badge", tone: "off", text: "已停用" })
-          const originBadge = item.origin === "user"
-            ? Badge({ key: "origin", tone: "user", text: "自装" })
-            : Badge({ key: "origin", tone: "none", text: "官方" })
-          const own = item.source !== undefined && item.source !== null && item.source !== ""
-          const actions = item.enabled
-            ? [ActionButton({ key: "disable", label: "停用", busy, onClick: () => { if (!confirmDisable(item)) return; void act("disable", { id: item.entryId, source: item.source }) } })]
-            : [ActionButton({ key: "enable", label: "启用", tone: "primary", busy, onClick: () => { void act("enable", { id: item.entryId, source: item.source }) } })]
-          if (own && !item.enabled) {
-            actions.push(ActionButton({ key: "unmount", label: "卸载", tone: "danger", busy, onClick: () => { void act("unmount", { id: item.entryId, source: item.source }) } }))
-          }
-          return e("div", { key: "other-" + item.entryId, className: "upm-row" },
-            e("div", { className: "upm-info" },
-              e("div", { className: "upm-name" }, title === "" ? item.entryId : title),
-              e("div", { className: "upm-file" },
-                "id: " + item.entryId + " · " + (item.moduleName === undefined || item.moduleName === null ? "(未声明 name)" : item.moduleName) +
-                (own ? " · 补丁: " + item.source : "") +
-                (loaderAvailable && item.dangling ? " · (未在运行树中)" : ""),
-              ),
-            ),
-            badge,
-            originBadge,
-            PhaseBadge(item.fiberPhase),
-            e("div", { className: "upm-actions" }, actions),
-          )
-        })
-        rows.push(e("div", { key: "other-card", className: "upm-card" },
-          otherRows.length === 0
-            ? e("div", { className: "upm-empty" }, "运行树里没有其他挂载的插件。")
-            : otherRows,
-        ))
 
         rows.push(e("div", { key: "note", className: "upm-note" },
           "本页管理三类插件:①插件目录散件——挂载/卸载/启用/停用直接改补丁层条目;②已安装的 npm 插件包——未挂载的按包名挂载进补丁层(HMR 热生效),已由 bundles 全局挂载的以运行树为准;③运行树其他插件(部署、插件包等)——按条目 id 写“停用覆盖”裸行,删除即恢复。运行树条目带来源徽章:自装 = 你通过目录/补丁层/npm 包安装,官方 = 随 dsh 部署自带。两个补丁文件都被 dsh HMR 监听,保存后热重载、无需重启;卸载只移除补丁行,文件/包保留。停用系统关键插件可能影响 dsh 功能,请谨慎操作。",
