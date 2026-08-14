@@ -1,7 +1,7 @@
 {
   "name": "dsh-user-plugins-manager",
-  "version": "1.0.1",
-  "description": "DSH 用户插件管理器:在“设置 → 插件”中管理 ~/.dsh/plugins 下用户插件的挂载、停用、启用与卸载(写入 cordis.patch.yml 补丁层,HMR 热生效)。",
+  "version": "1.1.0",
+  "description": "DSH 用户插件管理器:在“设置 → 插件”中统一管理用户插件——目录散件的挂载/启用/停用/卸载,以及运行树中部署/包插件的启用/停用(写入 cordis.patch.yml 补丁层,HMR 热生效)。",
   "type": "module",
   "main": "src/index.js",
   "exports": {

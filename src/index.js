@@ -2,19 +2,21 @@
 //
 // 在“设置 → 插件 → 用户插件”页面的背后提供 JSON 管理 API:
 //   GET /dsh-user-plugins/state    ?sessionId=<当前会话>
+//   GET /dsh-user-plugins/loader   运行树(Loader)只读投影,与内置“全部”页同源
 //   GET /dsh-user-plugins/mount    ?file=<插件文件名>&sessionId=...
 //   GET /dsh-user-plugins/unmount  ?id=<条目id>&source=<补丁文件>&sessionId=...
 //   GET /dsh-user-plugins/enable   ?id=...&source=...&sessionId=...
 //   GET /dsh-user-plugins/disable  ?id=...&source=...&sessionId=...
 //
-// 管理对象:~/.dsh/plugins 下的插件文件,以及把它们挂载进组合树的
-// 用户补丁层(profile 的 cordis.patch.yml 与家目录 cordis.patch.yml)。
+// 管理对象:① ~/.dsh/plugins 下的插件文件及其挂载行;② Loader 运行树中
+// 由部署/插件包挂载的其他条目——按 id 向用户补丁层写入顶层“停用覆盖”
+// 裸行(YAML `- id: x` + `disabled: true`),删除该行即恢复启用。
 // 写入一律经 fs 服务并按“当前会话”解析出的沙箱策略围栏,绝不绕过策略;
 // 补丁文件被 CLI 的 HMR 监听,保存后热重载、无需重启。
 
 export const name = 'user-plugins-manager'
 
-export const inject = ['webServer']
+export const inject = ['webServer', 'loader']
 
 export function apply(ctx) {
   const fs = ctx.get('fs')
@@ -71,6 +73,33 @@ export function apply(ctx) {
     return undefined
   }
 
+  // ---- Loader 运行树只读投影(与内置“全部”标签页同源)----
+  // FiberState 数值映射:0 pending / 1 loading / 2 active / 3 failed /
+  // 4 disposed(→ null)/ 5 unloading。
+  const FIBER_PHASE = { 0: 'pending', 1: 'loading', 2: 'active', 3: 'failed', 5: 'unloading' }
+
+  function loaderSnapshot() {
+    const loader = ctx.get('loader')
+    if (loader === undefined || typeof loader.entries !== 'function') {
+      return { ok: false, error: 'loader 服务不可用' }
+    }
+    try {
+      const entries = []
+      for (const entry of loader.entries()) {
+        if (entry.options !== undefined && entry.options.group) continue
+        entries.push({
+          entryId: entry.id,
+          moduleName: entry.options === undefined ? undefined : entry.options.name,
+          enabled: entry.disabled !== true,
+          fiberPhase: entry.fiber === undefined ? null : (FIBER_PHASE[entry.fiber.state] ?? null),
+        })
+      }
+      return { ok: true, entries }
+    } catch (error) {
+      return { ok: false, error: errorOf(error) }
+    }
+  }
+
   // ---- 补丁层文本解析:只读取 insert 块里的条目,其余行一律原样保留 ----
   const TOP = /^-\s+([A-Za-z0-9_-]+):\s*$/
   const ITEM = /^(\s*)-\s+id:\s*(.*)$/
@@ -85,16 +114,16 @@ export function apply(ctx) {
       const blockHeader = i
       i++
       for (; i < lines.length; i++) {
-        const nextTop = TOP.exec(lines[i])
-        if (nextTop !== null) { i--; break }
+        // 任何顶格 `- ` 行(下一个 - insert: 块或 - id: 裸覆盖行)都表示
+        // 本块结束;只有缩进的 - id: 才是本块的条目。
+        if (/^-\s+/.test(lines[i])) { i--; break }
         const itemStart = ITEM.exec(lines[i])
         if (itemStart === null) continue
         const idIndent = itemStart[1].length
         const item = { id: stripQuotes(itemStart[2]), name: undefined, disabled: false, blockHeader, startLine: i, endLine: i, idIndent }
         i++
         for (; i < lines.length; i++) {
-          const endTop = TOP.exec(lines[i])
-          if (endTop !== null) { i--; break }
+          if (/^-\s+/.test(lines[i])) { i--; break }
           const nextItem = ITEM.exec(lines[i])
           if (nextItem !== null && nextItem[1].length <= idIndent) { i--; break }
           const key = KEY.exec(lines[i])
@@ -107,6 +136,32 @@ export function apply(ctx) {
         }
         items.push(item)
       }
+    }
+    return items
+  }
+
+  // 顶层“停用覆盖”裸行(- id: x / disabled: true)扫描:与 insert 块分开,
+  // 供 enable 时整块移除。块内出现 name/config/insert 键的行视为真实条目,
+  // 由 parsePatch 负责,这里只记录键名用于拒绝误删。
+  const BARE = /^-\s+id:\s*(.*)$/
+  const BARE_KEY = /^(\s+)(name|disabled|config|insert):/
+
+  function parseBare(text) {
+    const lines = text.split(/\r?\n/)
+    const items = []
+    for (let i = 0; i < lines.length; i++) {
+      const m = BARE.exec(lines[i])
+      if (m === null) continue
+      const item = { id: stripQuotes(m[1]), keys: [], startLine: i, endLine: i }
+      i++
+      for (; i < lines.length; i++) {
+        if (/^-\s+/.test(lines[i])) { i--; break }
+        const key = BARE_KEY.exec(lines[i])
+        if (key !== null) item.keys.push(key[2])
+        const trimmed = lines[i].trim()
+        if (trimmed !== '' && !trimmed.startsWith('#')) item.endLine = i
+      }
+      items.push(item)
     }
     return items
   }
@@ -214,19 +269,52 @@ export function apply(ctx) {
     return { ok: true, dshHome: home, pluginDir, pluginDirExists, policyMode: policy === undefined ? null : policy.mode, patchFiles, plugins, external }
   }
 
-  // ---- 条目级变更:disable/enable/unmount 只动目标条目的行,其余行不动 ----
+  // ---- 条目级变更:disable/enable/unmount 只动目标条目,其余行不动 ----
+  // 条目在该补丁层的 insert 列表里 → 就地改行;否则(部署/插件包挂载)
+  // 在用户补丁层追加/移除顶层“停用覆盖”裸行(- id: x / disabled: true)。
   const ID_OK = /^[A-Za-z0-9_-]{1,64}$/
 
   async function mutatePatch(id, source, kind, sessionId) {
     if (fs === undefined) return { ok: false, error: '文件服务(fs)不可用' }
     const home = await locateHome()
     if (home === undefined) return { ok: false, error: '无法确定 DSH_HOME' }
-    if (!patchPaths(home).includes(source)) return { ok: false, error: '无效的补丁文件路径' }
+    const paths = patchPaths(home)
+    if (source === null || source === undefined || source === '') source = paths[0]
+    if (!paths.includes(source)) return { ok: false, error: '无效的补丁文件路径' }
     if (typeof id !== 'string' || !ID_OK.test(id)) return { ok: false, error: '无效的条目 id' }
     const lines = await readLines(source)
-    if (lines === undefined) return { ok: false, error: '补丁文件不存在:' + source }
-    const item = parsePatch(lines.join('\n')).find((candidate) => candidate.id === id)
-    if (item === undefined) return { ok: false, error: '未在补丁层找到条目:' + id }
+    const item = lines === undefined ? undefined : parsePatch(lines.join('\n')).find((candidate) => candidate.id === id)
+
+    if (item === undefined) {
+      // 不在 insert 列表里:只能以“停用覆盖”管理运行树中真实存在的条目。
+      const snapshot = loaderSnapshot()
+      const exists = snapshot.ok === true && snapshot.entries.some((entry) => entry.entryId === id)
+      if (!exists) return { ok: false, error: '运行树中不存在条目:' + id + '(停用覆盖只接受真实挂载的条目 id)' }
+      if (kind === 'disable') {
+        const next = lines === undefined
+          ? ['# dsh 用户插件停用覆盖(由“设置 → 插件 → 用户插件”页管理)。', '# 顶层裸行按 id 停用部署/插件包挂载的条目;删除该行即恢复启用。', '']
+          : lines
+        while (next.length > 0 && next[next.length - 1].trim() === '') next.pop()
+        next.push('', '- id: ' + id, '  disabled: true')
+        await writeLines(source, next, sessionId)
+        return scanState(sessionId)
+      }
+      if (kind === 'enable') {
+        if (lines === undefined) return scanState(sessionId)
+        const bare = parseBare(lines.join('\n')).find((candidate) => candidate.id === id)
+        if (bare === undefined) return scanState(sessionId)
+        if (bare.keys.some((key) => key !== 'disabled')) {
+          return { ok: false, error: '条目 ' + id + ' 的覆盖行还包含其他键(' + bare.keys.join(',') + '),请手动编辑:' + source }
+        }
+        lines.splice(bare.startLine, bare.endLine - bare.startLine + 1)
+        await writeLines(source, lines, sessionId)
+        return scanState(sessionId)
+      }
+      if (kind === 'unmount') {
+        return { ok: false, error: '该插件由部署或插件包挂载,不能从用户补丁层卸载;请使用“停用”' }
+      }
+      return { ok: false, error: '未知操作:' + kind }
+    }
 
     if (kind === 'disable') {
       let done = false
@@ -343,6 +431,7 @@ export function apply(ctx) {
   ctx.effect(() => {
     const disposes = [
       route('/dsh-user-plugins/state', (query) => scanState(query.get('sessionId'))),
+      route('/dsh-user-plugins/loader', () => loaderSnapshot()),
       route('/dsh-user-plugins/mount', (query) => mountPlugin(query.get('file'), query.get('sessionId'))),
       route('/dsh-user-plugins/unmount', (query) => mutatePatch(query.get('id'), query.get('source'), 'unmount', query.get('sessionId'))),
       route('/dsh-user-plugins/enable', (query) => mutatePatch(query.get('id'), query.get('source'), 'enable', query.get('sessionId'))),
