@@ -281,7 +281,8 @@ export function apply(ctx) {
     const paths = patchPaths(home)
     if (source === null || source === undefined || source === '') source = paths[0]
     if (!paths.includes(source)) return { ok: false, error: '无效的补丁文件路径' }
-    if (typeof id !== 'string' || !ID_OK.test(id)) return { ok: false, error: '无效的条目 id' }
+    if (typeof id !== 'string' || id === '') return { ok: false, error: '无效的条目 id' }
+    if (!ID_OK.test(id)) return { ok: false, error: '条目 id 含不安全字符,无法自动写入补丁层(仅支持字母/数字/-/_;请手动编辑补丁文件)' }
     const lines = await readLines(source)
     const item = lines === undefined ? undefined : parsePatch(lines.join('\n')).find((candidate) => candidate.id === id)
 

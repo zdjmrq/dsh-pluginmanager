@@ -190,7 +190,8 @@ window.__ModuleLoader__.load({
         if (item.source !== undefined && item.source !== null && item.source !== "") return true
         if (typeof window === "undefined" || typeof window.confirm !== "function") return true
         return window.confirm(
-          "该插件由 dsh 部署或插件包提供。停用会向用户补丁层写入停用覆盖(" + item.entryId + "),可在本页随时重新启用。确定停用吗?",
+          "该插件由 dsh 部署或插件包提供。停用会向用户补丁层写入停用覆盖(" + item.entryId + "),保存后立即生效;" +
+          "若停用的是本管理器自身,本页会随之中断,恢复方法:手动删除 ~/.dsh/profiles/web/cordis.patch.yml 中对应的停用两行后刷新页面。确定停用吗?",
         )
       }
 
