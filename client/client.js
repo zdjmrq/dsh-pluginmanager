@@ -170,7 +170,7 @@ window.__ModuleLoader__.load({
             item.disabled ? Badge({ key: "badge", tone: "off", text: "已停用" }) : Badge({ key: "badge", tone: "on", text: "已启用" }),
             e("div", { className: "upm-actions" },
               item.disabled
-                ? ActionButton({ key: "enable", label: "启用", tone: "primary", busy, onClick: () => { void act("enable", { id: item.id, source: item.source }) } } })
+                ? ActionButton({ key: "enable", label: "启用", tone: "primary", busy, onClick: () => { void act("enable", { id: item.id, source: item.source }) } })
                 : ActionButton({ key: "disable", label: "停用", busy, onClick: () => { void act("disable", { id: item.id, source: item.source }) } }),
               ActionButton({ key: "unmount", label: "卸载", tone: "danger", busy, onClick: () => { void act("unmount", { id: item.id, source: item.source }) } }),
             ),
