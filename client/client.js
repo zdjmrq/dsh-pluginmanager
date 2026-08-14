@@ -2,10 +2,11 @@
 //
 // 注册到 设置 → 插件 的“用户插件”标签页。页面分三组:
 //   ① 插件目录(~/.dsh/plugins)散件:挂载 / 卸载 / 启用 / 停用;
-//   ② 运行树其他插件(部署、插件包、动态挂载):按条目 id 停用 / 启用
-//     (停用 = 向用户补丁层写顶层“停用覆盖”裸行,删除即恢复);
-//   ③ 已安装的 npm 插件包(profile node_modules 里声明 dsh.bundle.patch
-//     的包):显示安装/挂载来源,未挂载的一键按包名挂载进补丁层。
+//   ② 已安装的 npm 插件包(profile node_modules 里声明 dsh.bundle.patch
+//     的包):显示安装/挂载来源,未挂载的一键按包名挂载进补丁层;
+//   ③ 运行树其他插件(部署、插件包、动态挂载):按条目 id 停用 / 启用
+//     (停用 = 向用户补丁层写顶层“停用覆盖”裸行,删除即恢复),并标注
+//     来源徽章:自装 = 用户目录/补丁层/profile 包;官方 = 部署自带。
 // 数据来自宿主半的 /dsh-user-plugins/{state,loader,packages,...} JSON 路由;
 // 宿主半未升级(缺少新路由)时自动降级为旧版行为,不报错。
 window.__ModuleLoader__.load({
@@ -34,6 +35,7 @@ window.__ModuleLoader__.load({
       ".upm-badge-on{color:var(--dsw-alias-state-success-primary)}" +
       ".upm-badge-off{color:var(--dsw-alias-state-warn-primary)}" +
       ".upm-badge-none{color:var(--dsw-alias-label-secondary)}" +
+      ".upm-badge-user{color:var(--dsw-alias-brand-primary)}" +
       ".upm-actions{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}" +
       ".upm-btn{font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer}" +
       ".upm-btn:hover:not(:disabled){border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}" +
@@ -86,20 +88,32 @@ window.__ModuleLoader__.load({
       }, props.label)
     }
 
-    // 把 /state 的目录行 + /loader 的运行树条目合并成第二组(其他插件):
+    // 把 /state 的目录行 + /loader 的运行树条目合并成第三组(其他插件):
     // 运行树条目按 id 吸收 external 补丁行的 source;external 行若不在运行树
     // 里(悬空)也保留展示。目录散件的条目属于第一组,这里跳过。
-    function buildOtherItems(data, loaderData) {
+    // 来源判定:目录散件、用户补丁层条目、profile 里安装的 npm 包 → 自装(user);
+    // 其余(部署 bundle、运行时创建的基础设施)→ 官方(official)。
+    function buildOtherItems(data, loaderData, packagesData) {
       const items = []
       const byId = new Map()
       const dirIds = new Set()
+      const userOwned = new Set()
       for (const plugin of data.plugins || []) {
-        if (plugin.mounted && plugin.id !== undefined) dirIds.add(plugin.id)
+        if (plugin.mounted && plugin.id !== undefined) {
+          dirIds.add(plugin.id)
+          userOwned.add(plugin.id)
+        }
+      }
+      for (const row of data.external || []) userOwned.add(row.id)
+      const userPkgNames = new Set()
+      if (packagesData !== null && packagesData.ok === true) {
+        for (const pkg of packagesData.packages || []) userPkgNames.add(pkg.name)
       }
       const entries = loaderData !== null && loaderData.ok === true ? (loaderData.entries || []) : []
       for (const entry of entries) {
         if (entry.entryId !== undefined && dirIds.has(entry.entryId)) continue
-        const item = Object.assign({}, entry, { source: undefined, dangling: false })
+        const origin = userOwned.has(entry.entryId) || userPkgNames.has(entry.moduleName) ? "user" : "official"
+        const item = Object.assign({}, entry, { source: undefined, dangling: false, origin })
         items.push(item)
         byId.set(entry.entryId, item)
       }
@@ -107,7 +121,7 @@ window.__ModuleLoader__.load({
         if (dirIds.has(row.id)) continue
         const existing = byId.get(row.id)
         if (existing !== undefined) { existing.source = row.source; continue }
-        items.push({ entryId: row.id, moduleName: row.name === null ? undefined : row.name, enabled: !row.disabled, fiberPhase: null, source: row.source, dangling: true })
+        items.push({ entryId: row.id, moduleName: row.name === null ? undefined : row.name, enabled: !row.disabled, fiberPhase: null, source: row.source, dangling: true, origin: "user" })
       }
       items.sort((a, b) => String(a.entryId).localeCompare(String(b.entryId)))
       return items
@@ -281,49 +295,7 @@ window.__ModuleLoader__.load({
             : pluginRows,
         ))
 
-        // ---- 第二组:运行树中的其他插件(部署 / 插件包 / 动态挂载)----
-        const loaderAvailable = loaderData !== null && loaderData.ok === true
-        const otherItems = buildOtherItems(data, loaderData)
-        rows.push(e("div", { key: "other-title", className: "upm-subtitle" },
-          "其他已挂载插件(Loader 运行树)",
-          e("span", { className: "upm-count" }, otherItems.length + " 个条目"),
-        ))
-        if (!loaderAvailable && loaderError !== null) {
-          rows.push(e("div", { key: "loader-hint", className: "upm-warn" },
-            loaderError, "(运行树接口由宿主半插件提供,更新插件后重启 dsh 即可;未升级时以下只显示补丁层自有条目)",
-          ))
-        }
-        const otherRows = otherItems.map((item) => {
-          const title = moduleShortName(item.moduleName)
-          const badge = item.enabled ? Badge({ key: "badge", tone: "on", text: "已启用" }) : Badge({ key: "badge", tone: "off", text: "已停用" })
-          const own = item.source !== undefined && item.source !== null && item.source !== ""
-          const actions = item.enabled
-            ? [ActionButton({ key: "disable", label: "停用", busy, onClick: () => { if (!confirmDisable(item)) return; void act("disable", { id: item.entryId, source: item.source }) } })]
-            : [ActionButton({ key: "enable", label: "启用", tone: "primary", busy, onClick: () => { void act("enable", { id: item.entryId, source: item.source }) } })]
-          if (own && !item.enabled) {
-            actions.push(ActionButton({ key: "unmount", label: "卸载", tone: "danger", busy, onClick: () => { void act("unmount", { id: item.entryId, source: item.source }) } }))
-          }
-          return e("div", { key: "other-" + item.entryId, className: "upm-row" },
-            e("div", { className: "upm-info" },
-              e("div", { className: "upm-name" }, title === "" ? item.entryId : title),
-              e("div", { className: "upm-file" },
-                "id: " + item.entryId + " · " + (item.moduleName === undefined || item.moduleName === null ? "(未声明 name)" : item.moduleName) +
-                (own ? " · 补丁: " + item.source : "") +
-                (loaderAvailable && item.dangling ? " · (未在运行树中)" : ""),
-              ),
-            ),
-            badge,
-            PhaseBadge(item.fiberPhase),
-            e("div", { className: "upm-actions" }, actions),
-          )
-        })
-        rows.push(e("div", { key: "other-card", className: "upm-card" },
-          otherRows.length === 0
-            ? e("div", { className: "upm-empty" }, "运行树里没有其他挂载的插件。")
-            : otherRows,
-        ))
-
-        // ---- 第三组:已安装的 npm 插件包 ----
+        // ---- 第二组:已安装的 npm 插件包 ----
         const packagesAvailable = packagesData !== null && packagesData.ok === true
         const packageItems = packagesAvailable ? (packagesData.packages || []) : []
         rows.push(e("div", { key: "pkg-title", className: "upm-subtitle" },
@@ -343,7 +315,7 @@ window.__ModuleLoader__.load({
                 ? Badge({ key: "badge", tone: "on", text: "补丁层挂载" })
                 : Badge({ key: "badge", tone: "none", text: "已安装未挂载" })
             const actions = item.mounted === "bundle"
-              ? [e("span", { key: "hint", className: "upm-meta" }, "启停见“其他已挂载插件”组(重启 dsh 后出现)")]
+              ? [e("span", { key: "hint", className: "upm-meta" }, "启停见下方“其他已挂载插件”组")]
               : item.mounted === "patch"
                 ? [ActionButton({ key: "unmount", label: "卸载", tone: "danger", busy, onClick: () => { void act("unmount", { id: item.patchId, source: item.patchSource }) } })]
                 : [ActionButton({ key: "mount", label: "挂载", tone: "primary", busy, onClick: () => { void act("mount", { pkg: item.name }) } })]
@@ -365,8 +337,54 @@ window.__ModuleLoader__.load({
           ))
         }
 
+        // ---- 第三组:运行树中的其他插件(部署 / 插件包 / 动态挂载)----
+        const loaderAvailable = loaderData !== null && loaderData.ok === true
+        const otherItems = buildOtherItems(data, loaderData, packagesData)
+        rows.push(e("div", { key: "other-title", className: "upm-subtitle" },
+          "其他已挂载插件(Loader 运行树)",
+          e("span", { className: "upm-count" }, otherItems.length + " 个条目"),
+        ))
+        if (!loaderAvailable && loaderError !== null) {
+          rows.push(e("div", { key: "loader-hint", className: "upm-warn" },
+            loaderError, "(运行树接口由宿主半插件提供,更新插件后重启 dsh 即可;未升级时以下只显示补丁层自有条目)",
+          ))
+        }
+        const otherRows = otherItems.map((item) => {
+          const title = moduleShortName(item.moduleName)
+          const badge = item.enabled ? Badge({ key: "badge", tone: "on", text: "已启用" }) : Badge({ key: "badge", tone: "off", text: "已停用" })
+          const originBadge = item.origin === "user"
+            ? Badge({ key: "origin", tone: "user", text: "自装" })
+            : Badge({ key: "origin", tone: "none", text: "官方" })
+          const own = item.source !== undefined && item.source !== null && item.source !== ""
+          const actions = item.enabled
+            ? [ActionButton({ key: "disable", label: "停用", busy, onClick: () => { if (!confirmDisable(item)) return; void act("disable", { id: item.entryId, source: item.source }) } })]
+            : [ActionButton({ key: "enable", label: "启用", tone: "primary", busy, onClick: () => { void act("enable", { id: item.entryId, source: item.source }) } })]
+          if (own && !item.enabled) {
+            actions.push(ActionButton({ key: "unmount", label: "卸载", tone: "danger", busy, onClick: () => { void act("unmount", { id: item.entryId, source: item.source }) } }))
+          }
+          return e("div", { key: "other-" + item.entryId, className: "upm-row" },
+            e("div", { className: "upm-info" },
+              e("div", { className: "upm-name" }, title === "" ? item.entryId : title),
+              e("div", { className: "upm-file" },
+                "id: " + item.entryId + " · " + (item.moduleName === undefined || item.moduleName === null ? "(未声明 name)" : item.moduleName) +
+                (own ? " · 补丁: " + item.source : "") +
+                (loaderAvailable && item.dangling ? " · (未在运行树中)" : ""),
+              ),
+            ),
+            badge,
+            originBadge,
+            PhaseBadge(item.fiberPhase),
+            e("div", { className: "upm-actions" }, actions),
+          )
+        })
+        rows.push(e("div", { key: "other-card", className: "upm-card" },
+          otherRows.length === 0
+            ? e("div", { className: "upm-empty" }, "运行树里没有其他挂载的插件。")
+            : otherRows,
+        ))
+
         rows.push(e("div", { key: "note", className: "upm-note" },
-          "本页管理三类插件:①插件目录散件——挂载/卸载/启用/停用直接改补丁层条目;②运行树其他插件(部署、插件包等)——按条目 id 写“停用覆盖”裸行,删除即恢复;③已安装的 npm 插件包——未挂载的按包名挂载进补丁层(HMR 热生效),已由 bundles 全局挂载的以运行树为准。两个补丁文件都被 dsh HMR 监听,保存后热重载、无需重启;卸载只移除补丁行,文件/包保留。停用系统关键插件可能影响 dsh 功能,请谨慎操作。",
+          "本页管理三类插件:①插件目录散件——挂载/卸载/启用/停用直接改补丁层条目;②已安装的 npm 插件包——未挂载的按包名挂载进补丁层(HMR 热生效),已由 bundles 全局挂载的以运行树为准;③运行树其他插件(部署、插件包等)——按条目 id 写“停用覆盖”裸行,删除即恢复。运行树条目带来源徽章:自装 = 你通过目录/补丁层/npm 包安装,官方 = 随 dsh 部署自带。两个补丁文件都被 dsh HMR 监听,保存后热重载、无需重启;卸载只移除补丁行,文件/包保留。停用系统关键插件可能影响 dsh 功能,请谨慎操作。",
         ))
       }
 
