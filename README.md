@@ -1,113 +1,142 @@
-# dsh-user-plugins-manager
+# dsh-pluginmanager · 插件架构师
 
-> 仓库:https://github.com/zdjmrq/dsh-user-plugins-manager · 主题:`dsh-plugin`(Oh-My-DSH 生态可检索)
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 
-在 DeepSeek Harness(DSH)的 **设置 → 插件** 里新增一个 **“用户插件”** 标签页,把三种插件形态**统一在一个页面管理**:
+> 你的 DSH 装了 100 多个插件？恭喜，你现在拥有了一座没有楼层指示牌的摩天大楼。
+> 这个插件就是那张楼层指示牌——顺便把"哪层能拆、哪层是承重墙"给你标得明明白白。
 
-1. **插件目录散件**(`~/.dsh/plugins` 下的 `.mjs/.js/.cjs` 文件):挂载、停用、启用、卸载;
-2. **已安装的 npm 插件包**(profile `node_modules` 里声明 `dsh.bundle.patch` 的包):显示安装/挂载来源,未挂载的一键按包名挂载进补丁层;
-3. **运行树其他插件**(部署、插件包、动态挂载等,与内置“全部”标签页同源):停用、启用,并显示实时运行状态(等待中 / 运行中 / 加载失败…)与来源徽章(自装 / 官方)。
+**dsh-pluginmanager** 是 DeepSeek Harness Web 的设置页插件管理器。它把全部插件从一张 100+ 行的大平铺（谢谢你，原生 `all` 标签页）整理成**三层架构视图**，让"看懂 DSH 的插件体系"这件事从"考古"变成"观光"。
 
-所有操作都写入 `cordis.patch.yml` 补丁层,由 DSH 的 HMR 监听器**热生效,无需重启**。
+> 本仓库发布名为 `dsh-pluginmanager`；GitHub 仓库名沿用 `dsh-user-plugins-manager`。安装/卸载/`dsh.profile.bundles` 里请使用包名 **`dsh-pluginmanager`**。
 
-> A settings tab for DeepSeek Harness that manages user plugin files in `~/.dsh/plugins` (mount / disable / enable / unmount), every other plugin in the live Loader tree (disable / enable by id override), and installed npm dsh plugin packages (mount / unmount by package name) — all through the `cordis.patch.yml` patch layer, applied live by DSH's HMR.
+---
 
-## 功能特性
+## 🏗️ 它到底解决了什么
 
-- **插件目录视图**:扫描 `~/.dsh/plugins` 下的 `.mjs/.js/.cjs` 插件文件,显示每个文件的挂载状态(已启用 / 已停用 / 未挂载)与补丁条目 id;
-- **一键挂载**:为未挂载的文件自动生成唯一 id 并在补丁层追加 `- insert:` 条目(`file:///` URL,loader 官方 `EntryOptions` 形状);
-- **启用 / 停用**:写入或移除条目上的 `disabled: true` 行——loader 会跳过被停用的条目并释放其 fiber;
-- **卸载**:移除补丁行,插件文件保留在目录中;
-- **运行树视图**:新增 `/dsh-user-plugins/loader` 只读投影,直接读 `ctx.loader.entries()`(与内置“全部”标签页同源),把部署、插件包、动态挂载的插件也纳入本页:显示条目 id、模块名、有效启停状态与 fiber 阶段;
-- **来源徽章**:运行树每条目标注**自装 / 官方**——自装 = 目录散件、用户补丁层条目、profile 安装的 npm 包;官方 = 随 dsh 部署自带(含运行时基础设施);
-- **三组可折叠**:三个分组的标题行即折叠开关,默认折叠、点击展开/收起(展开状态在页面会话内保持),页面更清爽;
-- **包插件的停用/启用**:对不在用户补丁层里的条目,按 id 写入顶层**停用覆盖裸行**(YAML `- id: x` + `disabled: true`,官方 patch 形状,即 telemetry 开关同款机制),删除该行即恢复——**不修改 node_modules、不破坏插件包**,重启后依然生效;
-- **npm 插件包清单**:新增 `/dsh-user-plugins/packages` 路由,扫描 profile `node_modules` 里声明 `dsh.bundle.patch` 的包,显示包名/版本/依赖来源与挂载来源(bundles 全局 / 补丁层 / 未挂载);
-- **npm 包一键挂载/卸载**:未挂载的包按**包名** `- insert:` 进补丁层(与文件挂载同机制,HMR 热生效,无需改 `dsh.profile.bundles`、无需重启);补丁层挂载的包可一键卸载;已在 bundles 里的包提示去运行树组管理启停;
-- **双补丁层感知**:同时读取 profile 级(`~/.dsh/profiles/web/cordis.patch.yml`)与 home 级(`~/.dsh/cordis.patch.yml`)补丁层,操作精确落在条目所在的文件上,其余行(含注释)原样保留;
-- **沙箱合规**:所有写入经 DSH 的 `fs` 服务,并按“当前会话”解析出的沙箱策略围栏——会话是 `danger-full-access` 才允许写补丁层,`workspace-write` 下会被正确拒绝并在页面提示;
-- **优雅降级**:宿主半未升级(无 loader 路由)时页面自动退回旧版行为并给出提示,不会报错;
-- **零依赖、零构建**:宿主半是纯 ESM、客户端半是手写的 module-loader bundle,`git+` / `file:` 直接安装即可,无需任何构建步骤。
+DSH 的插件体系很强大，但原生的插件清单长这样：
 
-## 安装
+```
+@deepseek-ai/dsh-llm  @deepseek-ai/dsh-tool-bash  @deepseek-ai/dsh-client-ui-theme
+@deepseek-ai/dsh-agent-loop  @deepseek-ai/dsh-tool-fs  @deepseek-ai/dsh-client-ui-sidebar
+@deepseek-ai/dsh-session  @deepseek-ai/dsh-tool-web  ...
+（还有 90 多个，它们全在一个列表里，平等地糊你一脸）
+```
+
+谁负责 Agent 大脑？谁负责界面？谁是模型能调的工具？你装的扩展又混在哪？——**都看不出来**。
+
+这个插件把混沌整理成了架构：
+
+```
+┌─────────────────────────────────────────────┐
+│  dsh-pluginmanager  总览                     │
+│                                             │
+│  ┌───────────────────────────────────────┐  │
+│  │ 原生扩展                    [N]  ›    │  │  ← 点进去：系统层 / WebUI 层 / 工具层
+│  │ 系统层 · WebUI 层 · 工具层             │  │
+│  ├───────────────────────────────────────┤  │
+│  │ 用户扩展                    [M]  ›    │  │  ← 点进去：补丁行 / 扩展包 / 依赖
+│  │ 补丁行插件 · 扩展包 · 依赖             │  │
+│  ├───────────────────────────────────────┤  │
+│  │ 运行中（临时）               [K]  ›    │  │  ← 当前会话的动态 Cordis 插件
+│  │ 当前会话的动态 Cordis 插件             │  │
+│  └───────────────────────────────────────┘  │
+└─────────────────────────────────────────────┘
+```
+
+## 🧭 三层架构，一眼看懂
+
+### 1. 原生扩展（只读，承重墙）
+
+原生插件按职责自动分成三层，**不提供任何卸载按钮**——防止手滑把 Agent 的脑干摘了：
+
+| 层 | 是什么 | 例子 |
+|---|---|---|
+| **系统层** | Agent 系统运转的核心：模型、会话、沙箱、审批、子代理 | `dsh-llm`、`dsh-agent-loop`、`dsh-sandbox` |
+| **WebUI 层** | 浏览器界面的一切 | `dsh-client-ui-*`、`dsh-client-connection` |
+| **工具层** | 模型能调用的原生工具 | `dsh-tool-bash`、`dsh-tool-fs`、`dsh-tool-web` |
+
+分层靠"包名前缀 + 官方 bundle 来源"判定，绝对**不会**因为你的扩展名字里带个 `ui` 就混进 WebUI 层——原生是原生，扩展是扩展，楚河汉界。
+
+### 2. 用户扩展（自由区，可拆）
+
+你自己装的一切：补丁行插件（手工放置的 balance、terminal 之类）、扩展包（bundle）、依赖插件。每行都有：
+
+- **停用 / 启用**：只摘激活行，配置保留，可随时反悔
+- **彻底卸载**：激活行 + 依赖声明 + node_modules 三连清，二次确认
+- **补登记**：把"手工丢进 node_modules、没写进 dependencies"的插件正式登记进依赖——从此插件市场（marketplace）也认得它
+- **未登记依赖**标签：一眼看出哪些是规范安装、哪些是野路子
+
+### 3. 运行中（临时）
+
+当前会话创建并运行的动态 Cordis 插件（`@pluginId` 那些），只读展示，进程没了它们也就没了。
+
+## 📝 描述系统：插件终于会说话了
+
+- 内置 **90+ 个核心原生插件**的中文名 + 一句话简介（比如 `dsh-agent-loop` = "Agent 主循环：调度模型步骤、并行分发工具调用"）
+- 每个插件都可以**点"编辑描述"**自己写备注，持久化到 `~/.dsh/profiles/web/plugin-manager/descriptions.json`
+- 没有描述？兜底显示包名，绝不留白
+
+## 🔍 其他小亮点
+
+- **热加载，不重启**：启用 / 停用 / 卸载即点即生效——先把变更持久化到 `cordis.patch.yml`，再把运行中的 Loader 条目精准热切换（`loader.update` / `loader.remove`），目标插件即时重启，其它插件不受影响
+- **搜索过滤**：按名称 / 显示名 / 描述 / 来源过滤，全局生效
+- **折叠 + 数量徽章**：每层一个数字，谁也别想藏在角落里
+- **中文名 + 包名并排**：先给你看人话，再给你看真名
+- **中英双语**：跟随 webui 的 locale，切换即生效
+- **预设感知**：工具插件的真实启停由当前 agent 预设决定，页面会把预设控制的条目标出来，不误导
+
+## 📦 安装
 
 ```bash
-# 1) 把本插件作为依赖装入 web profile(推荐 git 安装:可随时升级、不依赖本地目录)
+# 作为 bundle 装进 web profile（官方推荐方式）
 cd ~/.dsh/profiles/web
 pnpm add "git+https://github.com/zdjmrq/dsh-user-plugins-manager.git"
-# 2) 把包名追加进 package.json 的 dsh.profile.bundles 列表末尾:
-#   "dsh-user-plugins-manager"
+# 然后把包名追加进 package.json 的 dsh.profile.bundles 列表末尾：
+#   "dsh-pluginmanager"
 ```
 
-> 也支持本地目录安装:`pnpm add "file:<本仓库路径>"`(安装的是当时目录的快照,升级需重新 add)。
+然后重启 dsh web 服务，设置 → 插件 → 插件管理。
 
-重启 DSH 后生效:打开 **设置 → 插件 → 用户插件** 即可看到管理页面。
+> ⚠️ **只选一种方式安装，不要混用。** 本插件自带 `cordis.patch.yml`（插入行 `id: pluginmanager`），装成 bundle 后由 DSH 在启动时自动应用；如果你**另外**又手工在 profile 的 `cordis.patch.yml` 里写了同样的插入行，启动会报
+> `duplicate loader entry id: pluginmanager` 并拒绝启动（同一插件被激活了两次）。
+>
+> **排查**：启动失败时检查 `~/.dsh/profiles/web/package.json` 的 `dsh.profile.bundles`（bundle 方式）和 `~/.dsh/profiles/web/cordis.patch.yml`（patch 方式）——同一插件只应出现在其中一处。从旧版（patch 行方式）升级时，先删掉 patch 里那一行再装 bundle。
 
-## 使用
+本地开发调试也可以用 `file:` 依赖直接指向仓库目录（记得同样不要叠加 patch 行）。
 
-1. 把插件文件(如 `my-plugin.mjs`)放入 `~/.dsh/plugins/`;
-2. 打开 设置 → 插件 → 用户插件,点 **刷新**;
-3. **插件目录**组:点 **挂载** 上线;随时可 **停用 / 启用 / 卸载**;
-4. **已安装的 npm 插件包**组:用 `pnpm add <包>` 装进 profile 的包会出现在这里——未挂载的点 **挂载**(按包名进补丁层,热生效),补丁层挂载的点 **卸载**,bundles 全局挂载的会提示去运行树组管理;
-5. **其他已挂载插件**组:点 **停用** 关闭部署/包插件(会确认,并写入停用覆盖裸行),点 **启用** 恢复;状态徽章实时显示 Loader 中的运行阶段,来源徽章区分自装 / 官方;
-6. 修改会写入 `cordis.patch.yml` 并热重载,任务栏/会话无需重启。
+## 🛠️ 技术速览
 
-## 更新升级
-
-- 宿主半(路由/管理逻辑)升级后需要**重启 DSH** 生效;客户端半(页面 UI)从磁盘下发,**Ctrl+F5 刷新即生效**;
-- git 安装的升级方式(remove+add 会强制重取最新 commit):
-
-```bash
-cd ~/.dsh/profiles/web
-pnpm remove dsh-user-plugins-manager
-pnpm add "git+https://github.com/zdjmrq/dsh-user-plugins-manager.git"
-```
-
-## 卸载
-
-```bash
-cd ~/.dsh/profiles/web
-pnpm remove dsh-user-plugins-manager
-# 并从 package.json 的 dsh.profile.bundles 中移除 "dsh-user-plugins-manager"
-```
-
-插件写进 `cordis.patch.yml` 的条目(挂载行/停用覆盖行)会保留,是否清理由你决定。
-
-## 与内置标签页的关系
-
-- **已配置**:可展开的设置卡片,展示用户拥有设置命名空间的宿主插件;
-- **全部**:只读清单,与本插件的“运行树”组同源(`ctx.loader.entries()`);
-- **用户插件**(本插件):在“全部”基础上补齐**可操作性**——目录散件全生命周期、npm 包挂载/卸载、任意条目的停用/启用,并标注自装/官方来源。
-
-## 已知限制
-
-- **会话级插件不显示**:agent 预设(隔离域)与动态 Cordis 插件不在根 Loader 树里,与内置“全部”页一致;预设插件请到“预设”设置中管理;
-- **只显示当前 profile**:页面展示当前 web 组合树(headless/tui 各自独立);
-- **停用白名单**:条目 id 须匹配 `[A-Za-z0-9_-]{1,64}` 才能自动写覆盖行(部署行全部满足;个别运行时创建的行会提示手动编辑);
-- **停用系统关键插件有风险**:页面会弹确认;停掉核心行(如 webserver)可能让页面不可用,恢复方法 = 删除补丁文件中的停用两行。
-
-## 工作原理
-
-- DSH 用 loader 补丁层组合插件树:用户层是 `~/.dsh/profiles/web/cordis.patch.yml` 与 `~/.dsh/cordis.patch.yml`,顶层 YAML 数组里 `- insert:` 条目即为挂载(条目字段:`id` / `name` / `disabled` 等);
-- 补丁层按序应用(包层 → profile 层 → home 层 → overlay),后层可按 id 覆盖前层条目——所以用户层能停用任何包层挂载的插件,这正是内置 telemetry 开关使用的同款机制(`{ id, disabled: true }`);
-- 本插件宿主半通过 `webServer` 注册 `/dsh-user-plugins/*` JSON 路由,对补丁文件做**行级文本手术**(只动目标条目,注释与其他块原样保留),并注入 `loader` 服务直读 `ctx.loader.entries()` 提供运行树投影;
-- npm 包按**包名** `- insert:` 挂载,loader 从 profile 的 `node_modules` 解析(与 bundles 补丁的 `name` 字段同机制);包的客户端半经 `dsh.client` 声明,由内置 modules 插件扫描同一棵宿主树发现;
-- DSH 的 CLI 对 `cordis.patch.yml` 有 HMR 监听,文件保存后 loader 热重载组合树;
-- 客户端半注册官方 Slot `settings.plugins.tab`(`id: "user-plugins"`,与内置“已配置/全部”标签页并列,零覆盖内置 UI)。
-
-## 目录结构
-
-```
-src/index.js        # 宿主半:JSON 管理路由 + 补丁层读写(经 fs 服务,按会话沙箱策略围栏)
-client/client.js    # 客户端半:设置页标签与 UI(手写 module-loader bundle)
-cordis.patch.yml    # bundle 补丁:把宿主半插入组合树
-package.json        # dsh.bundle.patch + dsh.client 声明
-```
+- Host 半边：完整 Node 环境，`pluginManager` Typert Remote（snapshot / setEnabled / uninstall / saveDescription / register），直接读写 profile 文件
+- 原生判定：`dsh-base` + `dsh-web-app` 官方 bundle 的依赖与 patch 声明 + Loader 内置 `cordis:` builtins
+- 补丁编辑：文本块级操作 `cordis.patch.yml`（保留注释与 `!!js` 表达式），写入前自动备份
+- Browser 半边：`settings.plugins.tab` slot 注册，纯 React + CSS 变量，零框架负担
+- 卸载通过官方 `dsh plugin --profile web remove` 做依赖/bundles 收尾，再自己清理 patch 行与描述；失败时不落半状态
 
 ## 📖 文字开源描述
 
 本插件在「文字开源」枢纽仓库 [dsh-text-open-source](https://github.com/zdjmrq/dsh-text-open-source) 中配有完整描述（功能 / 技术路线 / 结构 / 关键实现 / 复刻提示词，不依赖代码即可复刻、便于理解与微调）：[plugins/dsh-user-plugins-manager.md](https://github.com/zdjmrq/dsh-text-open-source/blob/main/plugins/dsh-user-plugins-manager.md)。
 
-## License
+## ⚠️ 免责声明
+
+- 卸载、停用操作会修改 `cordis.patch.yml` 和 `package.json`，每次写入前有备份；但**请自己审阅源码后使用**
+- 热加载的「即时生效」等于让目标插件在本进程内重启一次：正在使用的会话状态（如运行中的终端）会随之断开，属正常现象；若运行中切换失败，操作已持久化，重启服务后仍会生效
+- 原生插件永远不提供卸载按钮，不是因为做不到，是因为没必要作死
+- 本项目与 DeepSeek 无隶属关系，纯社区行为
+
+## ❓ 常见问题
+
+**为什么我装的插件没出现在「用户扩展」里？**
+插件管理以运行时 Loader 条目为准。如果你只是 `npm i` 了包但没加激活行（`cordis.patch.yml`），它不会出现在任何一层——先在「用户扩展」里用「补登记」把它登记进依赖，再确认激活行存在。
+
+**那些带「未登记依赖」标签的是什么？**
+手工丢进 `node_modules`、没写进 `package.json` 的插件（比如你自己拷进去的）。点「补登记」即可纳入依赖管理，插件市场也能看到它。
+
+**原生插件的描述能改吗？**
+能。所有插件都支持「编辑描述」，改完存到 `~/.dsh/profiles/web/plugin-manager/descriptions.json`，重启后仍在。
+
+**启动报 `duplicate loader entry id: pluginmanager`？**
+说明插件被激活了两次（bundle 声明 + 手工 patch 行各一次）。打开 `~/.dsh/profiles/web/package.json` 确认 `dsh.profile.bundles` 里有 `dsh-pluginmanager`，再打开同目录 `cordis.patch.yml`，把里面 `- id: pluginmanager` 那一行（含它的 `insert:` 块）删掉即可——保留 bundle 这一种激活方式。
+
+## 📜 License
 
 MIT

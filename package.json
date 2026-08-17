@@ -1,35 +1,38 @@
 {
-  "name": "dsh-user-plugins-manager",
-  "version": "1.2.3",
-  "description": "DSH 用户插件管理器:在“设置 → 插件”中统一管理用户插件——目录散件的挂载/启用/停用/卸载、运行树中部署/包插件的启用/停用、以及 profile 中已安装 npm 插件包的挂载/卸载(写入 cordis.patch.yml 补丁层,HMR 热生效)。",
+  "name": "dsh-pluginmanager",
+  "description": "插件管理器（Plugin Manager）：把 DSH 插件按 原生扩展（系统/WebUI/工具）/ 用户扩展 / 临时 分层展示，附可编辑描述、补登记与卸载管理。",
+  "version": "0.1.0",
   "type": "module",
-  "main": "src/index.js",
+  "main": "lib/index.js",
   "exports": {
-    ".": "./src/index.js",
-    "./client": "./client/client.js",
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
-  "files": [
-    "src/index.js",
-    "client/client.js",
-    "cordis.patch.yml",
-    "README.md",
-    "LICENSE"
-  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zdjmrq/dsh-user-plugins-manager.git"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "platform": "web"
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale"
+      ]
     }
   },
   "keywords": [
+    "dsh",
     "dsh-plugin",
     "deepseek-harness",
-    "dsh",
-    "cordis",
-    "plugin-manager"
+    "plugin-manager",
+    "cordis"
   ],
   "license": "MIT"
 }
