@@ -7,7 +7,7 @@
 
 **dsh-pluginmanager** 是 DeepSeek Harness Web 的设置页插件管理器。它把全部插件从一张 100+ 行的大平铺（谢谢你，原生 `all` 标签页）整理成**三层架构视图**，让"看懂 DSH 的插件体系"这件事从"考古"变成"观光"。
 
-> 本仓库发布名为 `dsh-pluginmanager`；GitHub 仓库名沿用 `dsh-user-plugins-manager`。安装/卸载/`dsh.profile.bundles` 里请使用包名 **`dsh-pluginmanager`**。
+> npm 包名与 GitHub 仓库名均为 **`dsh-pluginmanager`**。安装、卸载与 `dsh.profile.bundles` 里请使用这个名称。
 
 ---
 
@@ -90,7 +90,7 @@ DSH 的插件体系很强大，但原生的插件清单长这样：
 ```bash
 # 作为 bundle 装进 web profile（官方推荐方式）
 cd ~/.dsh/profiles/web
-pnpm add "git+https://github.com/zdjmrq/dsh-user-plugins-manager.git"
+pnpm add "git+https://github.com/zdjmrq/dsh-pluginmanager.git"
 # 然后把包名追加进 package.json 的 dsh.profile.bundles 列表末尾：
 #   "dsh-pluginmanager"
 ```
