@@ -78,7 +78,7 @@ DSH 的插件体系很强大，但原生的插件清单长这样：
 
 ## 🔍 其他小亮点
 
-- **热加载，不重启**：启用 / 停用 / 卸载即点即生效——先把变更持久化到 `cordis.patch.yml`，再把运行中的 Loader 条目精准热切换（`loader.update` / `loader.remove`），目标插件即时重启，其它插件不受影响
+- **热加载，不重启**：启用 / 停用 / 卸载会先把变更持久化到 `cordis.patch.yml`，再精准热切换运行中的 Loader 条目。声明 `dsh.client.platform: web` 的插件在切换成功后会自动刷新页面，使 Host 与浏览器两半一起挂载或卸载
 - **搜索过滤**：按名称 / 显示名 / 描述 / 来源过滤，全局生效
 - **折叠 + 数量徽章**：每层一个数字，谁也别想藏在角落里
 - **中文名 + 包名并排**：先给你看人话，再给你看真名
@@ -108,7 +108,7 @@ pnpm add "git+https://github.com/zdjmrq/dsh-user-plugins-manager.git"
 
 - Host 半边：完整 Node 环境，`pluginManager` Typert Remote（snapshot / setEnabled / uninstall / saveDescription / register），直接读写 profile 文件
 - 原生判定：`dsh-base` + `dsh-web-app` 官方 bundle 的依赖与 patch 声明 + Loader 内置 `cordis:` builtins
-- 补丁编辑：文本块级操作 `cordis.patch.yml`（保留注释与 `!!js` 表达式），写入前自动备份
+- 补丁编辑：文本块级操作 `cordis.patch.yml`（保留注释与 `!!js` 表达式），写入前自动备份；运行时完整 Loader 路径只用于清单去重，持久化覆盖使用补丁树中的本地条目 ID
 - Browser 半边：`settings.plugins.tab` slot 注册，纯 React + CSS 变量，零框架负担
 - 卸载通过官方 `dsh plugin --profile web remove` 做依赖/bundles 收尾，再自己清理 patch 行与描述；失败时不落半状态
 
