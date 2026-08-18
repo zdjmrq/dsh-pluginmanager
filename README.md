@@ -106,7 +106,7 @@ pnpm add "git+https://github.com/zdjmrq/dsh-pluginmanager.git"
 
 ## 🛠️ 技术速览
 
-- Host 半边：完整 Node 环境，`pluginManager` Typert Remote（snapshot / setEnabled / uninstall / saveDescription / register），直接读写 profile 文件
+- Host 半边：完整 Node 环境，`pluginManager` Typert Remote（snapshot / setEnabled / uninstall / saveDescription / register），直接读写 profile 文件；协议与 Include 模块从启动当前进程的 DSH CLI 解析，与 Host 共享 Remote 标记和 Loader 运行时
 - 原生判定：`dsh-base` + `dsh-web-app` 官方 bundle 的依赖与 patch 声明 + Loader 内置 `cordis:` builtins
 - 补丁编辑：文本块级操作 `cordis.patch.yml`（保留注释与 `!!js` 表达式），写入前自动备份；运行时完整 Loader 路径只用于清单去重，持久化覆盖使用补丁树中的本地条目 ID
 - Browser 半边：`settings.plugins.tab` slot 注册，纯 React + CSS 变量，零框架负担
